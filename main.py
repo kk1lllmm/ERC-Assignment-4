@@ -2,228 +2,200 @@ import cv2
 import mediapipe as mp
 import numpy as np
 import time
-import random as rd
+import random
 import math
 
-# Initialize webcam
-#1
-cap = cv2.VideoCapture(0)
 
-frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH )) # To get the width of the frame
-frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT )) # To get the height of the frame
+# Initialize webcam
+cap=cv2.VideoCapture(0)
+
+width  = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
+height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
 
 # Initialize hand tracking
-#2
 mp_hands = mp.solutions.hands
+hands = mp_hands.Hands()
 
-hands = mp_hands.Hands(
-    static_image_mode = False , 
-    max_num_hands = 1 , 
-    min_detection_confidence = 0.75 , 
-    min_tracking_confidence = 0.75)
 
 # Initialize paddle and puck positions
 #3
-puck_coords = [int(frame_width/2) , int(frame_height/2)]
-paddle_coords = [int(frame_width/2), int(frame_height)]
+paddle_coords = [0 , 0]
+puck_coords = [width/2 , height]
+
+# paddle dimensions
+paddle_width=150
+paddle_length=10
 
 # Initial velocity
-d = 0.8 #For damping the puck after colliding with the wall
-initial_puck_velocity = [10, 10]
+initial_puck_velocity = [10, 10] 
 puck_velocity = initial_puck_velocity.copy()
 
 # Load target image and resize it to 30,30
-#4
-target_img = cv2.imread(r'target.png' , cv2.IMREAD_UNCHANGED) #Change to absolute path if it throws an error
-target_img = cv2.resize(target_img , (60 , 60) , interpolation = cv2.INTER_AREA) #Resizing to (60 , 60) (didn't use (30 , 30) as it was too small)
+image_path = "C:\\Users\\Asus\\Desktop\\target.png"
+original_image = cv2.imread(image_path)
+
+# Check if the image is loaded successfully
+if original_image is None:
+    print(f"Error: Unable to load the image from {image_path}")
+    # Add appropriate error handling or exit the program
+    exit()
+
+target_size = (30, 30)
+resized_image = cv2.resize(original_image, target_size)
 
 # Initialize 5 target positions randomly(remember assignment 2!!)
-#5
-np.random.seed(rd.randint(0 , 100))
-rand_pos_x = np.random.randint(0 , frame_width - 30 , size = 5) #Generating random X axis positions for targets
-rand_pos_y = np.random.randint(0 , frame_height - 30, size = 5) #Generating random Y axis positions for targets
+targets = [(random.randint(50, width - 50), random.randint(50, height - 50), 20) for _ in range(5)]
+
 
 # Initialize score
 #6
-is_target_hit = True
-targets_hit = 0 #Number of targets hit
-hit_times = [0] #Timestamps where targets are hit
-
 score = 0
+targets_hit=0
 
 # Initialize timer variables
 start_time = time.time()
 game_duration = 30  # 1/2 minute in seconds
 
 # Function to check if the puck is within a 5% acceptance region of a target
-'''
 def is_within_acceptance(puck, target, acceptance_percent=5):
     #complete the function
     #7
     global is_target_hit
 
-    dist = int(math.sqrt(abs((puck[0] - target[0][targets_hit])^2 + (puck[1] - target[1][targets_hit])^2)))
+    dist = (math.sqrt(abs((puck[0] - target[0]*[targets_hit])^2 + (puck[1] - target[1][targets_hit])^2)))
 
-    if dist >= int((frame_width/24 + 30)*(105/100)):
+    if dist >= int((width/24 + 30)*(105/100)):
         is_target_hit = True
     else:
         is_target_hit = False
 
     return is_target_hit
-'''
-    
 while True:
-
+    
     # Calculate remaining time and elapsed time in minutes and seconds   
-    #9
-    current_time = time.time() #Elapsed Time
+    elapsed_time=time.time()-start_time
+    remaining_time= game_duration-elapsed_time
+    elapsed_time_minutes=(time.time()-start_time)/60
+    remaining_time_minutes= (game_duration-elapsed_time)/60
     
     # Read a frame from the webcam
-    #10
-    success , frame = cap.read()
-
-    cv2.circle(frame , (int(frame_width/2) , 0) , int(frame_width/6) , (244 , 177 , 71) , 5) #Blue semi-circle on the top
-    cv2.circle(frame , (int(frame_width/2) , int(frame_height)) , int(frame_width/12) , (60 , 60 , 221) , 3) #Red semi-circle on the bottom
-    cv2.circle(frame , (int(frame_width/2) , int(frame_height)) , int(frame_width/48) , (60 , 60 , 221) , -1) #Smaller red semi-circle on the bottom
+    ret, frame = cap.read()
 
     # Flip the frame horizontally for a later selfie-view display
-    #11
-    frame.flags.writeable = False
-    frame = cv2.flip(frame , 1)
+    frame = cv2.flip(frame, 1)
 
     # Convert the BGR image to RGB
-    #12
-    frame.flags.writeable = True
-    frame = cv2.cvtColor(frame , cv2.COLOR_BGR2RGB)
-    
+    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
     # Process the frame with mediapipe hands
-    #13 
-    result = hands.process(frame)
-    frame = cv2.cvtColor(frame , cv2.COLOR_RGB2BGR)
+    results = hands.process(frame_rgb)
 
     # Update paddle position based on index finger tip
-    #14
-    hlm = result.multi_hand_landmarks
+    if results.multi_hand_landmarks:
+        for hand_landmarks in results.multi_hand_landmarks:
+            index_finger_tip = hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_TIP]
+            index_finger_x, index_finger_y = int(index_finger_tip.x * frame.shape[1]), int(index_finger_tip.y * frame.shape[0])
 
-    if hlm:
-        for h in hlm:
-            for id , coords in enumerate(h.landmark):
+            paddle_position = (index_finger_x, index_finger_y)
 
-                if id == 8: #Index for tip of index finger
-                    paddle_coords = [int(coords.x*frame_width ) , int(coords.y*frame_height)]
-                    cv2.circle(frame , (paddle_coords[0], paddle_coords[1]) , int(frame_width/24) , (0 , 0 , 0) , -1) #Draws paddle
-    
     # Update puck position based on its velocity
-    #15
-    if puck_velocity[0] > 0:
-        puck_coords[0] += int(puck_velocity[0] * (current_time - start_time))
-    else:
-        puck_coords[0] += int(puck_velocity[0] * (current_time - start_time))
-
-    if puck_velocity[1] > 0:
-        puck_coords[1] += int(puck_velocity[1] * (current_time - start_time))
-    else:
-        puck_coords[1] += int(puck_velocity[1] * (current_time - start_time))
-
-    cv2.circle(frame , puck_coords , int(frame_width/24) , (0 , 0 , 255) , -1) #Draws puck
+    puck_coords[0]+=puck_velocity[0]*elapsed_time
+    puck_coords[1]+=puck_velocity[1]*elapsed_time
 
     # Check for collisions with the walls
-    #16
-    if puck_coords[0] >= int(frame_width - frame_width/24): #Checks if puck is hitting right wall
-        puck_coords[0] = int(frame_width - frame_width/24)
-        puck_velocity[0] = -d * puck_velocity[0] #Damps the horizontal velocity
-    if puck_coords[0] <= int(frame_width/24): #Checks if puck is hitting left wall
-        puck_coords[0] = int(frame_width/24)
-        puck_velocity[0] = -d * puck_velocity[0] #Damps the horizontal velocity
+    if puck_coords[0]<0 or puck_coords[0] > width:
+        puck_velocity[0] *= -1
 
-    if puck_coords[1] >= int(frame_height - frame_height/24): #Checks if puck is hitting ground
-        puck_coords[1] = int(frame_height - frame_height/24)
-        puck_velocity[1] = -d * puck_velocity[1] #Damps the vertical velocity
-    if puck_coords[1] <= int(frame_height/24): #Checks if puck is hitting roof
-        puck_coords[1] = int(frame_height/24)
-        puck_velocity[1] = -d * puck_velocity[1] #Damps the vertical velocity
+    if puck_coords[1]<0 or puck_coords[1] > height:
+        puck_velocity[1] *= -1    
 
     # Check for collisions with the paddle
-    #17
-    div = int(math.sqrt(abs((paddle_coords[0] - puck_coords[0])**2 + (paddle_coords[1] - puck_coords[1])**2))) #Gets distance between puck and paddle
-    if div <= int(frame_width/12):
-        puck_velocity[1] = -puck_velocity[1] #Reverses puck's vertical velocity
+    if(
+        paddle_coords[0]< puck_coords[0]< paddle_coords[0] + paddle_width and
+        paddle_coords[1]< puck_coords[1]< paddle_coords[1] + paddle_length
+    ):
+        puck_velocity[1]*=-1
 
     # Check for collisions with the targets(use is_within_acceptance)    
     #18
-    try:
-        dist1 = int(math.sqrt(abs((puck_coords[0] - rand_pos_x[targets_hit])**2 + (puck_coords[1] - rand_pos_y[targets_hit])**2))) #Gets distance between target and puck 
-    except:
-        dist1 = 1000 #Random value that isn't possible so that score doesn't get added needlessly
-        pass
-
-    if dist1 <= int(30*(1.25)):
+         # Increase the player's score
+         # Remove the hit target
+        # Increase puck velocity after each hit by 2(you will have to increase both x and y velocities
+    for target in targets:
+        if is_within_acceptance(puck_coords, target):
         # Increase the player's score
-        score += int(1000 * (1 / (current_time - hit_times[-1]))) #Adds to the score based on the time taken between subsequent target hits
-        
-        hit_times.append(current_time) #Adds time when target was hit to list
-        
-        targets_hit += 1 #Increases the value of number of targets hit
+                score += 1
 
-        # Increase puck velocity after each hit by 2(you will have to increase both x and y velocities)
-        puck_velocity[0] += 2  #Increases X-coordinate velocity by 2 units
-        puck_velocity[1] += 2  #Increases Y-coordinate velocity by 2 units
+        # Remove the hit target
+                targets.remove(target)
+
+        # Increase puck velocity after each hit by 2 (both x and y velocities)
+                puck_velocity[0] += 2
+                puck_velocity[1] += 2
 
     # Draw paddle, puck, and targets on the frame and overlay target image on frame
-    #19
-    try:
-        target_roi = frame[rand_pos_x[targets_hit] - int(60/2) : rand_pos_x[targets_hit] + int(60/2) , rand_pos_y[targets_hit] - int(60/2) : rand_pos_y[targets_hit] + int(60/2)] #Displays target image
-    except:
-        pass
+    cv2.rectangle(
+        frame,
+        (int(paddle_coords[0]), int(paddle_coords[1])),
+        (int(paddle_coords[0] + paddle_width), int(paddle_coords[1] + paddle_length)),
+        (0, 255, 0),
+        -1,
+        )
 
-    alpha = target_img[: , : , 3] / 255.0 #Gets alpha value of target image
-    beta = 1 - alpha
+    cv2.circle(frame, (int(puck_coords[0]), int(puck_coords[1])), 10, (255, 0, 0), -1)
 
-    for c in range(0 , 3):
-        #Lots of tries and excepts because it throws array shape errors sometimes
-        try:
-            target_roi[: , : , c] = (alpha * target_img[:, :, c] + beta * target_roi[:, :, c])
-        except: 
-            try:
-                target_roi[: , : , c] = (alpha * target_img[:, :, c] + beta * target_roi[:, :, c])
-            except:
-                try:
-                    target_roi[: , : , c] = (alpha * target_img[:, :, c] + beta * target_roi[:, :, c])
-                except:
-                    try:
-                        target_roi[: , : , c] = (alpha * target_img[:, :, c] + beta * target_roi[:, :, c])    
-                    except:
-                        pass
+    for target in targets:
+        cv2.circle(frame, (target[0], target[1]), target[2], (0, 0, 255), -1)
+
+   # FOR REFERENCE:
+    # for target_position in target_positions:
+    #     target_roi = frame[target_position[1]:target_position[1] + target_image.shape[0],
+    #                       target_position[0]:target_position[0] + target_image.shape[1]]
+    #     alpha = target_image[:, :, 3] / 255.0
+    #     beta = 1.0 - alpha
+    #     for c in range(0, 3):
+    #         target_roi[:, :, c] = (alpha * target_image[:, :, c] +
+    #                               beta * target_roi[:, :, c])
 
     # Display the player's score on the frame
-    #20
-    cv2.putText(frame , str("Score: ") + str(score) , (30,50) , cv2.FONT_HERSHEY_SIMPLEX , 1 , (0 , 0 , 0) , 2 , cv2.LINE_AA)
-    
+    cv2.putText(
+        frame, f"Score: {score}", (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2
+        )
+
+
     # Display the remaining time on the frame
-    #21
-    cv2.putText(frame , str("Time: ") + str(round(30 - (current_time-start_time) , 2)) + "s", (30,90) , cv2.FONT_HERSHEY_SIMPLEX , 1 , (0 , 0 , 0) , 2 , cv2.LINE_AA)
+    cv2.putText(
+        frame,
+        f"Time: {int(remaining_time_minutes):02}:{int(remaining_time) % 60:02}",
+        (width - 200, 50),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        1,
+        (255, 255, 255),
+        2,
+    )
 
     # Check if all targets are hit or time is up
-    #22
-    if current_time - start_time >= game_duration: #Check if 30 seconds have elapsed
-        cv2.rectangle(frame , (0 , frame_height) , (frame_width , 0) , (0 , 0 , 0) , -1) #Draws black background
-        cv2.putText(frame , str("Score: ") + str(score) , (frame_width//2 - 75,frame_height//2) , cv2.FONT_HERSHEY_SIMPLEX , 1 , (255 , 255 , 255) , 2 , cv2.LINE_AA) #Writes the end score of the player
-        cv2.putText(frame , str("Game Over"), (frame_width//2 - 75,frame_height//2 - 75) , cv2.FONT_HERSHEY_SIMPLEX , 1 , (255 , 255 , 255) , 2 , cv2.LINE_AA) #Writes "Game Over"
-
-    if targets_hit >= 5: #Check if all targets are hit
-        cv2.rectangle(frame , (0 , frame_height) , (frame_width , 0) , (0 , 0 , 0) , -1)
-        cv2.putText(frame , str("Score: ") + str(score) , (frame_width//2 - 75,frame_height//2) , cv2.FONT_HERSHEY_SIMPLEX , 1 , (255 , 255 , 255) , 2 , cv2.LINE_AA) #Writes the end score of the player
-        cv2.putText(frame , str("You Win"), (frame_width//2 - 75,frame_height//2 - 75) , cv2.FONT_HERSHEY_SIMPLEX , 1 , (255 , 255 , 255) , 2 , cv2.LINE_AA) #Writes "You Win"
+    if not targets or remaining_time <= 0:
+        cv2.putText(
+                frame,
+                "Game Over",
+                (int(width / 2) - 100, int(height / 2)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                2,
+                (0, 0, 255),
+                4,
+            )
+        cv2.imshow('Game Frame', frame)
+        cv2.waitKey(3000)  # Display "Game Over" for 3 seconds
+        break
 
     # Display the resulting frame
-    #23
-    cv2.imshow("Air Hockey",frame)
+    cv2.imshow('Game Frame', frame)
 
     # Exit the game when 'q' is pressed
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
 # Release the webcam and close all windows
-#24
 cap.release()
 cv2.destroyAllWindows()
